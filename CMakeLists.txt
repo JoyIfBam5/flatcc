@@ -271,3 +271,67 @@ if (FLATCC_INSTALL)
     install(DIRECTORY include/flatcc DESTINATION include)
 endif()
 
+#packaging
+find_package(Git)
+if(GIT_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} describe --abbrev=0 --tags
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE VERSION_STRING
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+    if(VERSION_STRING)
+        set(CPACK_PACKAGE_VERSION ${VERSION_STRING})
+    else()
+        set(CPACK_PACKAGE_VERSION "v1.0.0")
+    endif()
+else()
+    set(CPACK_PACKAGE_VERSION "v1.0.0")
+endif()
+
+set(BUILD_NUM_FILE "${CMAKE_SOURCE_DIR}/build.num")
+set(VERSION_FILE "${CMAKE_SOURCE_DIR}/build.version")
+if (EXISTS ${BUILD_NUM_FILE})
+    file(READ ${BUILD_NUM_FILE} BUILD_NUM)
+else()
+    set(BUILD_NUM 1)
+endif()
+
+if (EXISTS ${VERSION_FILE})
+    file(READ ${VERSION_FILE} LAST_VERSION)
+else()
+    set(LAST_VERSION ${CPACK_PACKAGE_VERSION})
+    file(WRITE ${VERSION_FILE} ${LAST_VERSION})
+endif()
+
+if (${LAST_VERSION} STREQUAL ${CPACK_PACKAGE_VERSION})
+    math(EXPR BUILD_NUM ${BUILD_NUM}+1)
+else()
+    set(BUILD_NUM 1)
+    set(LAST_VERSION ${CPACK_PACKAGE_VERSION})
+    file(WRITE ${VERSION_FILE} ${LAST_VERSION})
+endif()
+file(WRITE ${BUILD_NUM_FILE} ${BUILD_NUM})
+
+message(STATUS "Build num = " ${BUILD_NUM})
+message(STATUS "Current Version = " ${CPACK_PACKAGE_VERSION})
+
+set(CPACK_GENERATOR "RPM")
+
+if (FLATCC_RTONLY)
+    set(CPACK_PACKAGE_NAME "flatcc")
+else()
+    set(CPACK_PACKAGE_NAME "flatcc-devel")
+endif()
+
+set(CPACK_PACKAGE_RELEASE ${BUILD_NUM})
+set(CPACK_PACKAGE_CONTACT "")
+set(CPACK_PACKAGE_VENDOR "")
+set(CPACK_PACKAGING_INSTALL_PREFIX ${CMAKE_INSTALL_PREFIX})
+set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-${CPACK_PACKAGE_RELEASE}.${CMAKE_SYSTEM_PROCESSOR}")
+set(CPACK_RPM_PACKAGE_RELEASE ${BUILD_NUM})
+set(CPACK_RPM_PACKAGE_SUMMARY "FlatCC FlatBuffers in C for C")
+set(CPACK_RPM_PACKAGE_LICENSE "Apache License Version 2.0")
+set(CPACK_RPM_PACKAGE_GROUP "Development/Libraries")
+set(CPACK_RPM_PACKAGE_DESCRIPTION "FlatCC FlatBuffers in C for C")
+include(CPack)
+
