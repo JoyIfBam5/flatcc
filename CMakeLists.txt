@@ -246,6 +246,9 @@ else()
     add_subdirectory(src/runtime)
     add_subdirectory(src/compiler)
     add_subdirectory(src/cli)
+    if (FLATCC_INSTALL)
+        install(DIRECTORY include/flatcc DESTINATION include)
+    endif()
 endif()
 
 # disabled by FLATCC_RTONLY
@@ -266,10 +269,6 @@ set_target_properties(${dist_targets}
     LIBRARY_OUTPUT_DIRECTORY "${dist_dir}/lib"
     RUNTIME_OUTPUT_DIRECTORY "${dist_dir}/bin"
 )
-
-if (FLATCC_INSTALL)
-    install(DIRECTORY include/flatcc DESTINATION include)
-endif()
 
 #packaging
 find_package(Git)
