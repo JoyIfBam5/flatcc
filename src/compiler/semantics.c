@@ -35,26 +35,36 @@ static const int fb_known_attribute_types[] = {
 static fb_scalar_type_t map_scalar_token_type(fb_token_t *t)
 {
     switch (t->id) {
+    case tok_kw_uint64:
     case tok_kw_ulong:
         return fb_ulong;
+    case tok_kw_uint32:
     case tok_kw_uint:
         return fb_uint;
+    case tok_kw_uint16:
     case tok_kw_ushort:
         return fb_ushort;
+    case tok_kw_uint8:
     case tok_kw_ubyte:
         return fb_ubyte;
     case tok_kw_bool:
         return fb_bool;
+    case tok_kw_int64:
     case tok_kw_long:
         return fb_long;
+    case tok_kw_int32:
     case tok_kw_int:
         return fb_int;
+    case tok_kw_int16:
     case tok_kw_short:
         return fb_short;
+    case tok_kw_int8:
     case tok_kw_byte:
         return fb_byte;
+    case tok_kw_float64:
     case tok_kw_double:
         return fb_double;
+    case tok_kw_float32:
     case tok_kw_float:
         return fb_float;
     default:
@@ -677,6 +687,7 @@ static int process_table(fb_parser_t *P, fb_compound_type_t *ct)
     int need_id = 0, id_failed = 0;
     uint64_t max_id = 0;
     int key_ok, key_count = 0;
+    int is_union_vector;
 
     /*
      * This just tracks the presence of a `normal_field` or a hidden
@@ -734,7 +745,7 @@ static int process_table(fb_parser_t *P, fb_compound_type_t *ct)
                 member->id = (unsigned short)count;
             }
             ++count;
-        }
+        } 
         switch (member->type.type) {
         case vt_scalar_type:
             key_ok = 1;
@@ -889,9 +900,11 @@ static int process_table(fb_parser_t *P, fb_compound_type_t *ct)
             case fb_is_enum:
             case fb_is_table:
             case fb_is_struct:
+            case fb_is_union:
                 break;
             default:
-                error_sym_tok(P, sym, "vectors can only hold scalars, structs, enums, and tables", member->type.t);
+                /* Vectors of strings are handled separately but this is irrelevant to the user. */
+                error_sym_tok(P, sym, "vectors can only hold scalars, structs, enums, strings, tables, and unions", member->type.t);
                 member->type.type = vt_invalid;
                 continue;
             }
@@ -905,6 +918,13 @@ static int process_table(fb_parser_t *P, fb_compound_type_t *ct)
             member->type.ct = (fb_compound_type_t*)type_sym;
             member->size = member->type.ct->size;
             member->align = member->type.ct->align;
+            if (type_sym->kind == fb_is_union && !id_failed) {
+                /* Hidden union type field. */
+                if (!need_id) {
+                    member->id = (unsigned short)count;
+                }
+                ++count;
+            }
             break;
         default:
             error_sym(P, sym, "unexpected table field type encountered");
@@ -948,14 +968,21 @@ static int process_table(fb_parser_t *P, fb_compound_type_t *ct)
                 field_marker[member->id] = normal_field;
             }
             if (!id_failed && type_sym && type_sym->kind == fb_is_union) {
+                is_union_vector = member->type.type == vt_vector_type_ref;
                 if (member->id <= 1) {
-                    error_tok(P, m->ident, "id attribute value should be larger to accomdate hidden union type field");
+                    error_tok(P, m->ident, is_union_vector ?
+                            "id attribute value should be larger to accomdate hidden union vector type field" :
+                            "id attribute value should be larger to accomdate hidden union type field");
                     id_failed = 1;
                 } else if (field_marker[member->id - 1] == type_field) {
-                    error_tok(P, m->ident, "hidden union field below attribute id value conflicts with another hidden type field");
+                    error_tok(P, m->ident, is_union_vector ?
+                            "hidden union vector type field below attribute id value conflicts with another hidden type field" :
+                            "hidden union type field below attribute id value conflicts with another hidden type field");
                     id_failed = 1;
                 } else if (field_marker[member->id - 1]) {
-                    error_tok(P, m->ident, "hidden union field below attribute id value conflicts with another field");
+                    error_tok(P, m->ident, is_union_vector ?
+                            "hidden union vector type field below attribute id value conflicts with another field" :
+                            "hidden union type field below attribute id value conflicts with another field");
                     id_failed = 1;
                 } else {
                     field_marker[member->id - 1] = type_field;

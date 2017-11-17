@@ -124,6 +124,62 @@ int test_enums(flatcc_builder_t *B)
     return 0;
 }
 
+int test_type_aliases(flatcc_builder_t *B)
+{
+    int ret = 0;
+    void *buffer = 0;
+    size_t size;
+    ns(TypeAliases_table_t) ta;
+    flatbuffers_uint8_vec_ref_t v8_ref;
+    flatbuffers_double_vec_ref_t vf64_ref;
+
+    flatcc_builder_reset(B);
+
+    v8_ref = flatbuffers_uint8_vec_create(B, 0, 0);
+    vf64_ref = flatbuffers_double_vec_create(B, 0, 0);
+    ns(TypeAliases_create_as_root(B,
+          INT8_MIN, UINT8_MAX, INT16_MIN, UINT16_MAX,
+          INT32_MIN, UINT32_MAX, INT64_MIN, UINT64_MAX, 2.3f, 2.3, v8_ref, vf64_ref));
+    buffer = flatcc_builder_finalize_aligned_buffer(B, &size);
+    if ((ret = ns(TypeAliases_verify_as_root(buffer, size)))) {
+
+        hexdump("TypeAliases buffer", buffer, size, stderr);
+        printf("could not verify TypeAliases table, got %s\n", flatcc_verify_error_string(ret));
+        goto done;
+    }
+    ta = ns(TypeAliases_as_root(buffer));
+
+    if (ns(TypeAliases_i8(ta)) != INT8_MIN) goto failed;
+    if (ns(TypeAliases_i16(ta)) != INT16_MIN) goto failed;
+    if (ns(TypeAliases_i32(ta)) != INT32_MIN) goto failed;
+    if (ns(TypeAliases_i64(ta)) != INT64_MIN) goto failed;
+    if (ns(TypeAliases_u8(ta)) != UINT8_MAX) goto failed;
+    if (ns(TypeAliases_u16(ta)) != UINT16_MAX) goto failed;
+    if (ns(TypeAliases_u32(ta)) != UINT32_MAX) goto failed;
+    if (ns(TypeAliases_u64(ta)) != UINT64_MAX) goto failed;
+    if (ns(TypeAliases_f32(ta)) != 2.3f) goto failed;
+    if (ns(TypeAliases_f64(ta)) != 2.3) goto failed;
+    if (sizeof(ns(TypeAliases_i8(ta))) != 1) goto failed;
+    if (sizeof(ns(TypeAliases_i16(ta))) != 2) goto failed;
+    if (sizeof(ns(TypeAliases_i32(ta))) != 4) goto failed;
+    if (sizeof(ns(TypeAliases_i64(ta))) != 8) goto failed;
+    if (sizeof(ns(TypeAliases_u8(ta))) != 1) goto failed;
+    if (sizeof(ns(TypeAliases_u16(ta))) != 2) goto failed;
+    if (sizeof(ns(TypeAliases_u32(ta))) != 4) goto failed;
+    if (sizeof(ns(TypeAliases_u64(ta))) != 8) goto failed;
+    if (sizeof(ns(TypeAliases_f32(ta))) != 4) goto failed;
+    if (sizeof(ns(TypeAliases_f64(ta))) != 8) goto failed;
+
+done:
+    aligned_free(buffer);
+    return ret;
+
+failed:
+    ret = -1;
+    printf("Scalar type alias has unexpected value or size\n");
+    goto done;
+}
+
 int test_empty_monster(flatcc_builder_t *B)
 {
     int ret;
@@ -400,6 +456,8 @@ int verify_monster(void *buffer)
 {
     ns(Monster_table_t) monster, mon, mon2;
     ns(Monster_vec_t) monsters;
+    ns(Any_union_type_t) test_type;
+    ns(Any_union_t) test_union;
     /* This is an encoded struct pointer. */
     ns(Vec3_struct_t) vec;
     const char *name;
@@ -506,6 +564,39 @@ int verify_monster(void *buffer)
     }
     if (strcmp(ns(Color_name)(ns(Color_Green)), "Green")) {
         printf("Enum name map does not have a green solution\n");
+        return -1;
+    }
+    /*
+     * This is bit tricky because Color is a bit flag, so we can have
+     * combinations that are expected, but that we do not know. The
+     * known value logic does not accomodate for that.
+     */
+    if (!ns(Color_is_known_value(ns(Color_Green)))) {
+        printf("Color enum does not recognize the value of the Green flag\n");
+        return -1;
+    }
+    if (!ns(Color_is_known_value(1))) {
+        printf("Color enum does not recognize the value of the Red flag\n");
+        return -1;
+    }
+    if (ns(Color_is_known_value(4))) {
+        printf("Color enum recognizes a value it shouldn't\n");
+        return -1;
+    }
+    if (!ns(Color_is_known_value(8))) {
+        printf("Color enum does not recognize the value of the Blue flag\n");
+        return -1;
+    }
+    if (ns(Color_is_known_value(9))) {
+        printf("Color enum recognizes a value it shouldn't\n");
+        return -1;
+    }
+    if (!ns(Any_is_known_type(ns(Any_Monster)))) {
+        printf("Any type does not accept Monster\n");
+        return -1;
+    }
+    if (ns(Any_is_known_type(42))) {
+        printf("Any type recognizes unexpected type\n");
         return -1;
     }
     inv = ns(Monster_inventory(monster));
@@ -658,7 +749,8 @@ int verify_monster(void *buffer)
             return -1;
         }
     }
-    if (ns(Monster_test_type(monster)) != ns(Any_Monster)) {
+    test_type = ns(Monster_test_type(monster));
+    if (test_type != ns(Any_Monster)) {
         printf("the monster test type is not Any_Monster\n");
         return -1;
     }
@@ -674,6 +766,15 @@ int verify_monster(void *buffer)
     }
     if (ns(Monster_test_type(mon)) != ns(Any_NONE)) {
         printf("the enemy test type is not Any_NONE\n");
+        return -1;
+    }
+    test_union = ns(Monster_test_union(monster));
+    if (test_union.type != test_type) {
+        printf("the monster test union type is not Any_Monster\n");
+        return -1;
+    }
+    if (test_union.member != ns(Monster_test(monster))) {
+        printf("the union monster has gone awol\n");
         return -1;
     }
     monsters = ns(Monster_testarrayoftables(mon));
@@ -1662,6 +1763,93 @@ done:
     return ret;
 }
 
+int test_union_vector(flatcc_builder_t *B)
+{
+    void *buffer;
+    size_t size;
+    size_t n;
+    int color;
+    int ret = -1;
+    ns(Monster_table_t) mon;
+    ns(Stat_table_t) stat;
+    ns(Any_union_vec_ref_t) anyvec_ref;
+    ns(TestSimpleTableWithEnum_ref_t) kermit_ref;
+    ns(TestSimpleTableWithEnum_table_t) kermit;
+    flatbuffers_generic_table_vec_t anyvec;
+    ns(Any_vec_t) anyvec_type;
+    ns(Any_union_vec_t) anyvec_union;
+    ns(Any_union_t) anyelem;
+
+
+    flatcc_builder_reset(B);
+
+    ns(Monster_start_as_root(B));
+    ns(Monster_name_create_str(B, "Kermit"));
+
+    kermit_ref = ns(TestSimpleTableWithEnum_create(B,
+                ns(Color_Green), ns(Color_Green),
+                ns(Color_Green), ns(Color_Green)));
+    ns(Any_vec_start(B));
+    ns(Any_vec_push(B, ns(Any_as_TestSimpleTableWithEnum(kermit_ref))));
+    anyvec_ref = ns(Any_vec_end(B));
+    ns(Monster_manyany_add(B, anyvec_ref));
+
+    ns(Monster_end_as_root(B));
+
+    buffer = flatcc_builder_finalize_aligned_buffer(B, &size);
+
+    if ((ret = ns(Monster_verify_as_root(buffer, size)))) {
+        printf("Monster buffer with union vector failed to verify, got: %s\n", flatcc_verify_error_string(ret));
+        return -1;
+    }
+
+    mon = ns(Monster_as_root(buffer));
+    if (!ns(Monster_manyany_is_present(mon))) {
+        printf("manyany union vector should be present.\n");
+        goto done;
+    }
+    anyvec_type = ns(Monster_manyany_type(mon));
+    anyvec = ns(Monster_manyany(mon)); 
+    n = ns(Any_vec_len(anyvec_type));
+    if (n != 1) {
+        printf("manyany union vector has wrong length.\n");
+        goto done;
+    }
+    if (anyvec_type[0] != ns(Any_TestSimpleTableWithEnum)) {
+        printf("manyany union vector has wrong element type.\n");
+        goto done;
+    }
+    kermit = flatbuffers_generic_table_vec_at(anyvec, 0);
+    if (!kermit) {
+        printf("Kermit is lost.\n");
+        goto done;
+    }
+    color = ns(TestSimpleTableWithEnum_color(kermit));
+    if (color != ns(Color_Green)) {
+        printf("Kermit has wrong color: %i.\n", (int)color);
+        goto done;
+    }
+    anyvec_union = ns(Monster_manyany_union(mon)); 
+    if (ns(Any_union_vec_len(anyvec_union)) != 1) {
+        printf("manyany union vector has wrong length from a different perspective.\n");
+        goto done;
+    }
+    anyelem = ns(Any_union_vec_at(anyvec_union, 0));
+    if (anyelem.type != anyvec_type[0]) {
+        printf("Kermit is now different.\n");
+        goto done;
+    }
+    if (anyelem.member != kermit) {
+        printf("Kermit is incoherent.\n");
+        goto done;
+    }
+
+    ret = 0;
+done:
+    aligned_free(buffer);
+    return ret;
+}
+
 int test_add_set_defaults(flatcc_builder_t *B)
 {
     void *buffer;
@@ -2210,6 +2398,12 @@ int main(int argc, char *argv[])
     }
 #endif
 #if 1
+    if (test_union_vector(B)) {
+        printf("TEST FAILED\n");
+        return -1;
+    }
+#endif
+#if 1
     if (test_basic_sort(B)) {
         printf("TEST FAILED\n");
         return -1;
@@ -2247,6 +2441,12 @@ int main(int argc, char *argv[])
 #endif
 #if 1
     if (verify_include(B)) {
+        printf("TEST FAILED\n");
+        return -1;
+    }
+#endif
+#if 1
+    if (test_type_aliases(B)) {
         printf("TEST FAILED\n");
         return -1;
     }

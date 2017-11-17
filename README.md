@@ -3,6 +3,9 @@ Windows: [![Windows Build Status](https://ci.appveyor.com/api/projects/status/gi
 
 # FlatCC FlatBuffers in C for C
 
+_NOTE: ongoing work towards version 0.5.0 features might cause minor
+breakage. For full backwards compatibility use the v0.4.3 tag._
+
 `flatcc` has no external dependencies except for build and compiler
 tools, and the C runtime library. With concurrent Ninja builds, a small
 client project can build flatcc with libraries, generate schema code,
@@ -36,6 +39,7 @@ or printing in less than 2 us for a 10 field mixed type message.
 * [Required Fields and Duplicate Fields](#required-fields-and-duplicate-fields)
 * [Fast Buffers](#fast-buffers)
 * [Types](#types)
+* [Unions](#unions)
 * [Endianness](#endianness)
 * [Pitfalls in Error Handling](#pitfalls-in-error-handling)
 * [Searching and Sorting](#searching-and-sorting)
@@ -142,9 +146,12 @@ build script. Preferably generate a hexdump and call the buffer verifier
 to ensure the input is valid and link with the debug library
 `flatccrt_d`.
 
-See also [Debugging a Buffer](#debugging-a-buffer).
+See also [Debugging a Buffer](#debugging-a-buffer), and [readfile.h]
+useful for reading an existing buffer for verification.
 
 Example:
+
+[samples/bugreport](samples/bugreport)
 
 eclectic.fbs :
 
@@ -166,7 +173,7 @@ myissue.c :
 
 ```c
 /* Minimal test with all headers generated into a single file. */
-#include "myissue_generated.h"
+#include "build/myissue_generated.h"
 #include "flatcc/support/hexdump.h"
 
 int main(int argc, char *argv[])
@@ -188,8 +195,15 @@ int main(int argc, char *argv[])
     Eclectic_FooBar_height_add(B, -8000);
     Eclectic_FooBar_end_as_root(B);
     buf = flatcc_builder_get_direct_buffer(B, &size);
-    hexdump("Eclectic.FooBar buffer for myissue", buf, size, stdout);
+#if defined(PROVOKE_ERROR) || 0
+    /* Provoke error for testing. */
+    ((char*)buf)[0] = 42;
+#endif
     ret = Eclectic_FooBar_verify_as_root(buf, size);
+    if (ret) {
+        hexdump("Eclectic.FooBar buffer for myissue", buf, size, stdout);
+        printf("could not verify Electic.FooBar table, got %s\n", flatcc_verify_error_string(ret));
+    }
     flatcc_builder_clear(B);
     return ret;
 }
@@ -199,23 +213,31 @@ build.sh :
 #!/bin/sh
 cd $(dirname $0)
 
-FLATBUFFERS_DIR=../flatcc
+FLATBUFFERS_DIR=../..
 NAME=myissue
 SCHEMA=eclectic.fbs
+OUT=build
 
 FLATCC_EXE=$FLATBUFFERS_DIR/bin/flatcc
 FLATCC_INCLUDE=$FLATBUFFERS_DIR/include
 FLATCC_LIB=$FLATBUFFERS_DIR/lib
 
-$FLATCC_EXE --outfile ${NAME}_generated.h -a $SCHEMA || exit 1
-cc -I$FLATCC_INCLUDE -g -o $NAME $NAME.c -L$FLATCC_LIB -lflatccrt_d || exit 1
-echo "running $NAME"
-./$NAME || $(echo "failed" && exit 1)
-echo "success"
+mkdir -p $OUT
+$FLATCC_EXE --outfile $OUT/${NAME}_generated.h -a $SCHEMA || exit 1
+cc -I$FLATCC_INCLUDE -g -o $OUT/$NAME $NAME.c -L$FLATCC_LIB -lflatccrt_d || exit 1
+echo "running $OUT/$NAME"
+if $OUT/$NAME; then
+    echo "success"
+else
+    echo "failed"
+    exit 1
+fi
 ```
 
-
 ## Status
+
+0.5.0 is in development on master branch primarily adding support for
+union vectors.
 
 0.4.3 is a bug fix release covering nested FlatBuffers, JSON and grisu3
 numeric errors, special cases for JSON keyword parsing, improved C++
@@ -505,9 +527,7 @@ Here we provide a quick example of read-only access to Monster flatbuffer -
 it is an adapted extract of the [monster_test.c] file.
 
 First we compile the schema read-only with common (-c) support header and we
-add the recursion because
-[monster_test.fbs](https://github.com/dvidelabs/flatcc/blob/master/test/monster_test/monster_test.fbs)
-includes other files.
+add the recursion because [monster_test.fbs] includes other files.
 
     flatcc -cr test/monster_test/monster_test.fbs
 
@@ -746,6 +766,9 @@ In the builder example above, we can apply a verifier to the output:
         printf("Monster buffer is invalid: %s\n",
         flatcc_verify_error_string(ret));
     }
+
+The [readfile.h] utility may also be helpful in reading an existing
+buffer for verification.
 
 Flatbuffers can optionally leave out the identifier, here "MONS". Use a
 null pointer as identifier argument to ignore any existing identifiers
@@ -1093,9 +1116,12 @@ usual, and an enum to indicate the type which has the same name with a
 `_type` suffix and accepts a numeric or symbolic type code:
 
     {
-      name: "Container Monster", test_type: Monster,
+      name: "Container Monster",
+      test_type: Monster,
       test: { name: "Contained Monster" }
     }
+
+based on the schema is defined in [monster_test.fbs].
 
 Because other json processors may sort fields, it is possible to receive
 the type field after the test field. The parser does not store temporary
@@ -1107,6 +1133,25 @@ for nested unions this can still expand). Needless to say this slows down
 parsing. It is an error to provide only the table field or the type
 field alone, except if the type is `NONE` or `0` in which case the table
 is not allowed to be present.
+
+Union vectors are supported as of v0.5.0. A union vector is represented
+as two vectors, one with a vector of tables and one with a vector of
+types, similar to ordinary unions. It is more efficient to place the
+type vector first because it avoids backtracking. Because a union of
+type NONE cannot be represented by abasence of table field when dealing
+with vectors of unions, a table must have the value `null` if its type
+is NONE in the corresponding type vector. In other cases a table should
+be absent, and not null.
+
+Here is an example of JSON containing Monster root table with a union
+vector field named `manyany` which is a vector of `Any` unions in the
+[monster_test.fbs] schema:
+
+    {
+        "name": "Monster",
+        "manyany_type": [ "Monster", "NONE" ],
+        "manyany": [{"name": "Joe"}, null]
+    }
 
 
 ### Performance Notes
@@ -1226,13 +1271,6 @@ Thus the convention is that a const pointer to a struct encoded in a
 flatbuffer has the type `Vec3_struct_t` where as a writeable pointer to
 a native struct has the type `Vec3_t *` or `struct Vec3 *`.
 
-Union types are just any of a set of possible table types and an enum
-named as for example `Any_union_type_t`. There is a compound union type
-that can store both type and table reference such that `create` calls
-can represent unions as a single argument - see [flatcc_builder.h] and
-[Builder Interface Reference]. Union table fields return a pointer of type
-`flatbuffers_generic_table_t` which is defined as `const void *`.
-
 All types have a `_vec_t` suffix which is a const pointer to the
 underlying type. For example `Monster_table_t` has the vector type
 `Monster_vec_t`. There is also a non-const variant with suffix
@@ -1276,6 +1314,78 @@ replaced by `_vec_at` and `_vec_len`. For example
 or `_vec_len` will be 0 if the vector is missing whereas `_vec_at` will
 assert in debug or behave undefined in release builds following out of
 bounds access. This also applies to related string operations.
+
+The FlatBuffers schema uses the following scalar types: `ubyte`, `byte`,
+`ushort`, `short, uint`, `int`, `ulong`, and `long` to represent
+unsigned and signed integer types of length 8, 16, 32, and 64
+respectively. The schema syntax has been updated to also support the
+type aliases `uint8`, `int8`, `uint16`, `int16`, `uint32`, `int32`,
+`uint64`, `int64` to represent the same basic types. Likewise, the
+schema uses the types `float` and `double` to represent IEEE-754
+binary32 and binary64 floating point formats where the updated syntax
+also supports the type aliases `float32` and `float64`.
+
+The C interface uses the standard C types such as uint8 and double to
+represent scalar types and this is unaffected by the schema type name
+used, so the schema vector type `[float64]` is represented as
+`flatbuffers_double_vec_t` the same as `[double]` would be.
+
+Note that the C standard does not guarantee that the C types `float` and
+`double` are represented by the IEEE-754 binary32 single precision
+format and the binary64 double precision format respectively, although
+they usually are. If this is not the case FlatCC cannot work correctly
+with FlatBuffers floating point values. (If someone really has this
+problem, it would be possible to fix).
+
+Unions are represented with a two table fields, one with a table field
+and one with a type field. See separate section on Unions. As of flatcc
+v0.5.0 union vectors are also supported.
+
+## Unions
+
+A union represents one of several possible tables. A table with a union
+field such as `Monster.equipped` in the samples schema will have two
+accessors: `MyGame_Sample_Monster_equipped(t)` of type
+`flatcc_generic_table_t` and
+`MyGame_Sample_Monster_equipped_type(t)` of type
+`MyGame_Sample_Equipment_union_type_t`. A generic table is 
+is just a const void pointer that can be cast to the expected table type.
+The enumeration has a member for each table in the union and also
+`MyGame_Sample_Equipment_NONE` which has the value 0.
+
+Note: it is possible to observe types that are not expected because of
+schema evolution. So never assume that if a type is not one value it
+must the other.
+
+As of v0.5.0 it is also possible to retrieve a union as
+`MyGame_Sample_Monster_equipped_union(t)` of type
+`MyGame_Sample_Equipment_union_t` which returns a struct with a
+`type` and a `member` field of type. This is just a typedef to
+`flatbuffers_union_t` because structs cannot be cast in modern C.
+
+When building unions there as a separate, but similar struct for this
+purpose. Before v0.5.0 this struct was type specific and had member
+values with typed pointers, but now it only has the fields `type` and
+`members`. This change was necessary ino order to handle union vectors
+uniformly. See also [Builder Interface Reference].
+
+Union vectors are supported as of v0.5.0 and can be access similar to
+single value union fields. The field with the the `_type` suffix returns
+a vector of types, for example of type `MyGame_Sample_Equiment_vec_t` -
+note that this is a scalar vector not a vector of union objects.
+The other field returns a vector of type `flatcc_generic_table_vec_t`.
+Both vectors have same length. Union vectors can also be access with with the
+`_union(t)` method which returns a struct with two two members named
+`type` and `member` as before but where the type and member are the
+vectors just discussed. The struct can have the type
+`MyGame_Sample_Equipment_union_vec_t` which is just a typedef to
+`flatbuffers_union_vec_t`. It is possible to access elements with
+`_union_vec_at`, and `_union_vec_len` as with other vector types. The
+element returned is a struct of type `MyGame_Sample_Equipment_union_t`.
+Be careful to not confuse the union vector type with the scalar type
+vector with a similar name.
+
+There is a test in [monster_test.c] covering union vectors.
 
 
 ## Endianness
@@ -1772,9 +1882,11 @@ See [Benchmarks]
 [FlatBuffers Binary Format]: https://github.com/dvidelabs/flatcc/blob/master/doc/binary-format.md
 [Benchmarks]: https://github.com/dvidelabs/flatcc/blob/master/doc/benchmarks.md
 [monster_test.c]: https://github.com/dvidelabs/flatcc/blob/master/test/monster_test/monster_test.c
+[monster_test.fbs]: https://github.com/dvidelabs/flatcc/blob/master/test/monster_test/monster_test.fbs
 [test_json.c]: https://github.com/dvidelabs/flatcc/blob/master/test/json_test/test_json_parser.c
 [flatcc_builder.h]: https://github.com/dvidelabs/flatcc/blob/master/include/flatcc/flatcc_builder.h
 [flatcc_emitter.h]: https://github.com/dvidelabs/flatcc/blob/master/include/flatcc/flatcc_emitter.h
 [flatcc-help.md]: https://github.com/dvidelabs/flatcc/blob/master/doc/flatcc-help.md
 [flatcc_rtconfig.h]: https://github.com/dvidelabs/flatcc/blob/master/include/flatcc/flatcc_rtconfig.h
 [hexdump.h]: https://github.com/dvidelabs/flatcc/blob/master/include/flatcc/support/hexdump.h
+[readfile.h]: include/flatcc/support/readfile.h

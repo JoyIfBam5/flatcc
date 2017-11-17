@@ -20,6 +20,8 @@ int fb_gen_common_c_builder_header(fb_output_t *out)
         fprintf(out->fp, "typedef flatcc_builder_t %sbuilder_t;\n", nsc);
         fprintf(out->fp, "typedef flatcc_builder_ref_t %sref_t;\n", nsc);
         fprintf(out->fp, "typedef flatcc_builder_ref_t %svec_ref_t;\n", nsc);
+        fprintf(out->fp, "typedef flatcc_builder_union_ref_t %sunion_ref_t;\n", nsc);
+        fprintf(out->fp, "typedef flatcc_builder_union_vec_ref_t %sunion_vec_ref_t;\n", nsc);
         fprintf(out->fp, "/* integer return code (ref and ptr always fail on 0) */\n"
                 "#define %sfailed(x) ((x) < 0)\n", nsc);
     }
@@ -212,6 +214,33 @@ int fb_gen_common_c_builder_header(fb_output_t *out)
         "\n",
         nsc, nsc);
 
+    fprintf(out->fp,
+        "#define __%sbuild_union_vector_ops(NS, V, N, TN)\\\n"
+        "static inline TN ## _union_ref_t *V ## _extend(NS ## builder_t *B, size_t len)\\\n"
+        "{ return flatcc_builder_extend_union_vector(B, len); }\\\n"
+        "static inline TN ## _union_ref_t *V ## _append(NS ## builder_t *B, const TN ## _union_ref_t *data, size_t len)\\\n"
+        "{ return flatcc_builder_append_union_vector(B, data, len); }\\\n"
+        "static inline int V ## _truncate(NS ## builder_t *B, size_t len)\\\n"
+        "{ return flatcc_builder_truncate_union_vector(B, len); }\\\n"
+        "static inline TN ## _union_ref_t *V ## _edit(NS ## builder_t *B)\\\n"
+        "{ return flatcc_builder_union_vector_edit(B); }\\\n"
+        "static inline size_t V ## _reserved_len(NS ## builder_t *B)\\\n"
+        "{ return flatcc_builder_union_vector_count(B); }\\\n"
+        "static inline TN ## _union_ref_t *V ## _push(NS ## builder_t *B, const TN ## _union_ref_t ref)\\\n"
+        "{ return flatcc_builder_union_vector_push(B, ref); }\n"
+        "\n"
+        "#define __%sbuild_union_vector(NS, N)\\\n"
+        "typedef NS ## union_vec_ref_t N ## _union_vec_ref_t;\\\n"
+        "static inline int N ## _vec_start(NS ## builder_t *B)\\\n"
+        "{ return flatcc_builder_start_union_vector(B); }\\\n"
+        "static inline N ## _union_vec_ref_t N ## _vec_end(NS ## builder_t *B)\\\n"
+        "{ return flatcc_builder_end_union_vector(B); }\\\n"
+        "static inline N ## _union_vec_ref_t N ## _vec_create(NS ## builder_t *B, const N ## _union_ref_t *data, size_t len)\\\n"
+        "{ return flatcc_builder_create_union_vector(B, data, len); }\\\n"
+        "__%sbuild_union_vector_ops(NS, N ## _vec, N, N)\n"
+        "\n",
+        nsc, nsc, nsc);
+
     /* In addtion to offset_vector_ops... */
     fprintf(out->fp,
         "#define __%sbuild_string_vector_ops(NS, N)\\\n"
@@ -347,7 +376,7 @@ int fb_gen_common_c_builder_header(fb_output_t *out)
         "{ if (!NS ## is_native_pe()) { N ## _copy_to_pe(p, p); }; return p; }\\\n"
         "static inline N ## _t *N ##_from_pe(N ## _t *p)\\\n"
         "{ if (!NS ## is_native_pe()) { N ## _copy_from_pe(p, p); }; return p; }\\\n"
-        "static inline N ## _t *N ## _clear(N ## _t *p) { return memset(p, 0, N ## __size()); }\n"
+        "static inline N ## _t *N ## _clear(N ## _t *p) { return (N ## _t *)memset(p, 0, N ## __size()); }\n"
         "\n"
         "/* Depends on generated copy/assign_to/from_pe functions, and the type. */\n"
         "#define __%sbuild_struct(NS, N, S, A, FID, TFID)\\\n"
@@ -356,7 +385,7 @@ int fb_gen_common_c_builder_header(fb_output_t *out)
         "static inline N ## _t *N ## _start(NS ## builder_t *B)\\\n"
         "{ return (N ## _t *)flatcc_builder_start_struct(B, S, A); }\\\n"
         "static inline N ## _ref_t N ## _end(NS ## builder_t *B)\\\n"
-        "{ if (!NS ## is_native_pe()) { N ## _to_pe(flatcc_builder_struct_edit(B)); }\\\n"
+        "{ if (!NS ## is_native_pe()) { N ## _to_pe((N ## _t *)flatcc_builder_struct_edit(B)); }\\\n"
         "  return flatcc_builder_end_struct(B); }\\\n"
         "static inline N ## _ref_t N ## _end_pe(NS ## builder_t *B)\\\n"
         "{ return flatcc_builder_end_struct(B); }\\\n"
@@ -398,15 +427,15 @@ int fb_gen_common_c_builder_header(fb_output_t *out)
     fprintf(out->fp,
         "#define __%sbuild_union_field(ID, NS, N, TN)\\\n"
         "static inline int N ## _add(NS ## builder_t *B, TN ## _union_ref_t uref)\\\n"
-        "{ NS ## ref_t *_p; TN ## _union_type_t *_pt; if (uref.type == TN ## _NONE) return 0; if (uref._member == 0) return -1;\\\n"
+        "{ NS ## ref_t *_p; TN ## _union_type_t *_pt; if (uref.type == TN ## _NONE) return 0; if (uref.member == 0) return -1;\\\n"
         "  if (!(_pt = (TN ## _union_type_t *)flatcc_builder_table_add(B, ID - 1, sizeof(*_pt), sizeof(_pt))) ||\\\n"
-        "  !(_p = flatcc_builder_table_add_offset(B, ID))) return -1; *_pt = uref.type; *_p = uref._member; return 0; }\\\n"
+        "  !(_p = flatcc_builder_table_add_offset(B, ID))) return -1; *_pt = uref.type; *_p = uref.member; return 0; }\\\n"
         "static inline int N ## _add_type(NS ## builder_t *B, TN ## _union_type_t type)\\\n"
         "{ TN ## _union_type_t *_pt; if (type == TN ## _NONE) return 0; return (_pt = (TN ## _union_type_t *)flatcc_builder_table_add(B, ID - 1,\\\n"
         "  sizeof(*_pt), sizeof(*_pt))) ? ((*_pt = type), 0) : -1; }\\\n"
         "static inline int N ## _add_member(NS ## builder_t *B, TN ## _union_ref_t uref)\\\n"
         "{ NS ## ref_t *p; if (uref.type == TN ## _NONE) return 0; return (p = flatcc_builder_table_add_offset(B, ID)) ?\\\n"
-        "  ((*p = uref._member), 0) : -1; }\n"
+        "  ((*p = uref.member), 0) : -1; }\n"
         "\n",
         nsc);
 
@@ -440,7 +469,7 @@ int fb_gen_common_c_builder_header(fb_output_t *out)
         "static inline TN ## _t *N ## _start(NS ## builder_t *B)\\\n"
         "{ return (TN ## _t *)flatcc_builder_table_add(B, ID, S, A); }\\\n"
         "static inline int N ## _end(NS ## builder_t *B)\\\n"
-        "{ if (!NS ## is_native_pe()) { TN ## _to_pe(flatcc_builder_table_edit(B, S)); } return 0; }\\\n"
+        "{ if (!NS ## is_native_pe()) { TN ## _to_pe((TN ## _t *)flatcc_builder_table_edit(B, S)); } return 0; }\\\n"
         "static inline int N ## _end_pe(NS ## builder_t *B) { return 0; }\\\n"
         "static inline int N ## _create(NS ## builder_t *B __ ## TN ## _formal_args)\\\n"
         "{ TN ## _t *_p = N ## _start(B); if (!_p) return 0; TN ##_assign_to_pe(_p __ ## TN ## _call_args);\\\n"
@@ -519,6 +548,35 @@ int fb_gen_common_c_builder_header(fb_output_t *out)
         nsc, nsc, nsc);
 
     fprintf(out->fp,
+        "#define __%sbuild_union_vector_field(ID, NS, N, TN)\\\n"
+        "static inline int N ## _add(NS ## builder_t *B, TN ## _union_vec_ref_t uvref)\\\n"
+        "{ NS ## vec_ref_t *_p; if (!uvref.types || !uvref.members) return uvref.types == uvref.members ? 0 : -1;\\\n"
+        "  if (!(_p = flatcc_builder_table_add_offset(B, ID - 1))) return -1; *_p = uvref.types;\\\n"
+        "  if (!(_p = flatcc_builder_table_add_offset(B, ID))) return -1; *_p = uvref.members; return 0; }\\\n"
+        "static inline int N ## _start(NS ## builder_t *B)\\\n"
+        "{ return flatcc_builder_start_union_vector(B); }\\\n"
+        "static inline int N ## _end(NS ## builder_t *B)\\\n"
+        "{ return N ## _add(B, flatcc_builder_end_union_vector(B)); }\\\n"
+        "static inline int N ## _create(NS ## builder_t *B, const TN ## _union_ref_t *data, size_t len)\\\n"
+        "{ return N ## _add(B, flatcc_builder_create_union_vector(B, data, len)); }\\\n"
+        "__%sbuild_union_vector_ops(NS, N, N, TN)\n"
+        "\n",
+        nsc, nsc);
+
+    fprintf(out->fp,
+        "#define __%sbuild_union_vector_member_field(NS, N, NU, M, T)\\\n"
+        "static inline int N ## _ ## M ## _push_start(NS ## builder_t *B)\\\n"
+        "{ return T ## _start(B); }\\\n"
+        "static inline NU ## _union_ref_t *N ## _ ## M ## _push_end(NS ## builder_t *B)\\\n"
+        "{ return NU ## _vec_push(B, NU ## _as_ ## M (T ## _end(B))); }\\\n"
+        "static inline NU ## _union_ref_t *N ## _ ## M ## _push(NS ## builder_t *B, T ## _ref_t ref)\\\n"
+        "{ return NU ## _vec_push(B, NU ## _as_ ## M (ref)); }\\\n"
+        "static inline NU ## _union_ref_t *N ## _ ## M ## _push_create(NS ## builder_t *B __ ## T ##_formal_args)\\\n"
+        "{ return NU ## _vec_push(B, NU ## _as_ ## M(T ## _create(B __ ## T ## _call_args))); }\n"
+        "\n",
+        nsc);
+
+     fprintf(out->fp,
         "#define __%sbuild_string_vector_field(ID, NS, N)\\\n"
         "__%sbuild_offset_vector_field(ID, NS, N, NS ## string)\\\n"
         "__%sbuild_string_vector_ops(NS, N)\n"
@@ -636,13 +694,14 @@ static int get_total_struct_field_count(fb_compound_type_t *ct)
         if (member->metadata_flags & fb_f_deprecated) {
             continue;
         }
+        /* Fall through comments needed to silence gcc 7 warnings. */
         switch (member->type.type) {
         case vt_compound_type_ref:
             if (member->type.ct->symbol.kind == fb_is_struct) {
                 count += get_total_struct_field_count(member->type.ct);
                 continue;
             }
-            /* enum fall through. */
+            /* Fall through */
         default:
             ++count;
         }
@@ -1039,7 +1098,9 @@ static int gen_builder_table_args(fb_output_t *out, fb_compound_type_t *ct, int 
             case fb_is_table:
                 fprintf(out->fp, "%s_vec_ref_t v%llu", snref.text, llu(member->id));
                 break;
-            /* There are no union vectors. */
+            case fb_is_union:
+                fprintf(out->fp, "%s_union_vec_ref_t v%llu", snref.text, llu(member->id));
+                break;
             default:
                 gen_panic(out, "internal error: unexpected table table type");
                 continue;
@@ -1175,7 +1236,8 @@ static int gen_builder_table_prolog(fb_output_t *out, fb_compound_type_t *ct)
     return 0;
 }
 
-static int gen_union_member_fields(fb_output_t *out, const char *st, int n, const char *s, fb_compound_type_t *ct)
+static int gen_union_fields(fb_output_t *out, const char *st, int n, const char *s,
+        fb_compound_type_t *ct, int is_vector)
 {
     const char *nsc = out->nsc;
     fb_symbol_t *sym;
@@ -1184,6 +1246,7 @@ static int gen_union_member_fields(fb_output_t *out, const char *st, int n, cons
     int nu;
     fb_scoped_name_t snref;
     fb_scoped_name_t snu;
+    const char *kind = is_vector ? "vector_member" : "member";
 
     fb_clear(snref);
     fb_clear(snu);
@@ -1195,8 +1258,8 @@ static int gen_union_member_fields(fb_output_t *out, const char *st, int n, cons
             fb_compound_name(member->type.ct, &snu);
             symbol_name(sym, &nu, &su);
             fprintf(out->fp,
-                    "__%sbuild_union_member_field(%s, %s_%.*s, %s, %.*s, %s)\n",
-                    nsc, nsc, st, n, s, snref.text, nu, su, snu.text);
+                    "__%sbuild_union_%s_field(%s, %s_%.*s, %s, %.*s, %s)\n",
+                    nsc, kind, nsc, st, n, s, snref.text, nu, su, snu.text);
             break;
         default:
             break;
@@ -1299,7 +1362,7 @@ static int gen_builder_table_fields(fb_output_t *out, fb_compound_type_t *ct)
                 fprintf(out->fp,
                     "__%sbuild_union_field(%llu, %s, %s_%.*s, %s)\n",
                     nsc, llu(member->id), nsc, snt.text, n, s, snref.text);
-                    gen_union_member_fields(out, snt.text, n, s, member->type.ct);
+                gen_union_fields(out, snt.text, n, s, member->type.ct, 0);
                 break;
             default:
                 gen_panic(out, "internal error: unexpected compound type in table during code generation");
@@ -1331,7 +1394,10 @@ static int gen_builder_table_fields(fb_output_t *out, fb_compound_type_t *ct)
                     nsc, llu(member->id), nsc, snt.text, n, s, snref.text, snref.text);
                 break;
             case fb_is_union:
-                gen_panic(out, "internal error: unexpected vector of union present in table");
+                fprintf(out->fp,
+                    "__%sbuild_union_vector_field(%llu, %s, %s_%.*s, %s)\n",
+                    nsc, llu(member->id), nsc, snt.text, n, s, snref.text);
+                gen_union_fields(out, snt.text, n, s, member->type.ct, 1);
                 break;
             default:
                 gen_panic(out, "internal error: unexpected vector compound type in table during code generation");
@@ -1408,33 +1474,6 @@ static int gen_union(fb_output_t *out, fb_compound_type_t *ct)
     fb_clear(snref);
     fb_compound_name(ct, &snt);
 
-    fprintf(out->fp,
-        "struct %s_union_ref {\n"
-        "    %s_union_type_t type;\n"
-        "    union {\n"
-        "        %sref_t _member;\n",
-        snt.text, snt.text, nsc);
-    for (sym = ct->members; sym; sym = sym->link) {
-        member = (fb_member_t *)sym;
-        switch (member->type.type) {
-        case vt_compound_type_ref:
-            fb_compound_name((fb_compound_type_t *)member->type.ct, &snref);
-            symbol_name(sym, &n, &s);
-            fprintf(out->fp,
-                "        %s_ref_t %.*s;\n",
-                snref.text, n, s);
-            break;
-        case vt_missing:
-            fprintf(out->fp, "        %sref_t NONE;\n", nsc);
-            break;
-        default:
-            gen_panic(out, "internal error: unexpected union member type");
-            break;
-        }
-    }
-    fprintf(out->fp,
-        "    };\n"
-        "};\n\n");
     for (sym = ct->members; sym; sym = sym->link) {
         member = (fb_member_t *)sym;
         switch (member->type.type) {
@@ -1443,14 +1482,14 @@ static int gen_union(fb_output_t *out, fb_compound_type_t *ct)
             symbol_name(sym, &n, &s);
             fprintf(out->fp,
                 "static inline %s_union_ref_t %s_as_%.*s(%s_ref_t ref)\n"
-                "{ %s_union_ref_t uref; uref.type = %s_%.*s; uref.%.*s = ref; return uref; }\n",
+                "{ %s_union_ref_t uref; uref.type = %s_%.*s; uref.member = ref; return uref; }\n",
                 snt.text, snt.text, n, s, snref.text,
-                snt.text, snt.text, n, s, n, s);
+                snt.text, snt.text, n, s);
             break;
         case vt_missing:
             fprintf(out->fp,
                 "static inline %s_union_ref_t %s_as_NONE()\n"
-                "{ %s_union_ref_t uref; uref.type = %s_NONE; uref._member = 0; return uref; }\n",
+                "{ %s_union_ref_t uref; uref.type = %s_NONE; uref.member = 0; return uref; }\n",
                 snt.text, snt.text, snt.text, snt.text);
             break;
         default:
@@ -1458,11 +1497,15 @@ static int gen_union(fb_output_t *out, fb_compound_type_t *ct)
             break;
         }
     }
+    fprintf(out->fp,
+        "__%sbuild_union_vector(%s, %s)\n",
+        nsc, nsc, snt.text);
     return 0;
 }
 
 static int gen_union_typedefs(fb_output_t *out)
 {
+    const char *nsc = out->nsc;
     fb_symbol_t *sym;
     int was_here = 0;
     fb_scoped_name_t snt;
@@ -1474,8 +1517,9 @@ static int gen_union_typedefs(fb_output_t *out)
         case fb_is_union:
             fb_compound_name((fb_compound_type_t *)sym, &snt);
             fprintf(out->fp,
-                    "typedef struct %s_union_ref %s_union_ref_t;\n",
-                    snt.text, snt.text);
+                "typedef %sunion_ref_t %s_union_ref_t;\n"
+                "typedef %sunion_vec_ref_t %s_union_vec_ref_t;\n",
+                nsc, snt.text, nsc, snt.text);
             was_here = 1;
             break;
         default:
