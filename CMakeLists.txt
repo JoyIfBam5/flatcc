@@ -85,6 +85,9 @@ option (FLATCC_ALLOW_WERROR "allow -Werror to be configured" ON)
 # try using this option.
 option (FLATCC_IGNORE_CONST_COND "silence const condition warnings" OFF)
 
+# Specify a target lib directory
+set (FLATCC_LIB_DIR "lib64" CACHE STRING "Location of the installed libraries (lib64 or lib)")
+
 if (FLATCC_RTONLY)
     set(FLATCC_TEST off)
 endif()
@@ -265,8 +268,8 @@ endif()
 
 set_target_properties(${dist_targets}
     PROPERTIES
-    ARCHIVE_OUTPUT_DIRECTORY "${dist_dir}/lib"
-    LIBRARY_OUTPUT_DIRECTORY "${dist_dir}/lib"
+    ARCHIVE_OUTPUT_DIRECTORY "${dist_dir}/${FLATCC_LIB_DIR}"
+    LIBRARY_OUTPUT_DIRECTORY "${dist_dir}/${FLATCC_LIB_DIR}"
     RUNTIME_OUTPUT_DIRECTORY "${dist_dir}/bin"
 )
 
