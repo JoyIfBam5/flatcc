@@ -6,6 +6,8 @@ cmake_minimum_required (VERSION 2.8)
 
 project (FlatCC C)
 
+include (GNUInstallDirs)
+
 #
 # NOTE: when changing build options, clean the build using on of:
 #
